@@ -1,6 +1,25 @@
-type Entity = { claims?: Record<string, Array<{ mainsnak?: { datavalue?: { value?: unknown } } }>> };
+type TmdbMovie = { id: number; title: string; release_date?: string };
+type TmdbDetails = {
+  poster_path?: string | null;
+  overview?: string;
+  release_date?: string;
+  runtime?: number | null;
+  vote_average?: number;
+  genres?: Array<{ name: string }>;
+  external_ids?: { imdb_id?: string | null };
+  credits?: { cast?: Array<{ name: string }> };
+};
 
-const value = (entity: Entity | undefined, property: string) => entity?.claims?.[property]?.[0]?.mainsnak?.datavalue?.value;
+const tmdb = async <T,>(path: string) => {
+  const token = process.env.TMDB_READ_ACCESS_TOKEN;
+  if (!token) throw new Error("TMDB_READ_ACCESS_TOKEN is not configured");
+  const response = await fetch(`https://api.themoviedb.org/3${path}`, {
+    headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
+    next: { revalidate: 604800 },
+  });
+  if (!response.ok) throw new Error(`TMDB request failed (${response.status})`);
+  return response.json() as Promise<T>;
+};
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -9,28 +28,23 @@ export async function GET(request: Request) {
   if (!title) return Response.json({ error: "A title is required" }, { status: 400 });
 
   try {
-    const query = new URLSearchParams({ action: "query", format: "json", origin: "*", generator: "search", gsrsearch: `${title}${year ? ` ${year}` : ""}`, gsrnamespace: "0", gsrlimit: "1", prop: "extracts|pageimages|pageprops", exintro: "1", explaintext: "1", piprop: "thumbnail", pithumbsize: "500" });
-    const wiki = await fetch(`https://en.wikipedia.org/w/api.php?${query}`, { next: { revalidate: 604800 } }).then(r => r.json());
-    const page = Object.values(wiki.query?.pages ?? {})[0] as { extract?: string; thumbnail?: { source?: string }; pageprops?: { wikibase_item?: string } } | undefined;
-    const qid = page?.pageprops?.wikibase_item;
-    if (!page) return Response.json({});
-
-    let runtime: number | undefined, cast: string[] = [];
-    const genres: string[] = [];
-    if (qid) {
-      const entity = await fetch(`https://www.wikidata.org/wiki/Special:EntityData/${qid}.json`, { next: { revalidate: 604800 } }).then(r => r.json()) as { entities?: Record<string, Entity> };
-      const item = entity.entities?.[qid];
-      const duration = value(item, "P2047") as { amount?: string } | undefined;
-      runtime = duration?.amount ? Math.round(Number(duration.amount.replace("+", ""))) : undefined;
-      const castClaims = item?.claims?.P161?.slice(0, 4) ?? [];
-      const ids = castClaims.map(claim => ((claim.mainsnak?.datavalue?.value as { id?: string } | undefined)?.id)).filter(Boolean) as string[];
-      if (ids.length) {
-        const people = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&props=labels&languages=en&ids=${ids.join("|")}`, { next: { revalidate: 604800 } }).then(r => r.json()) as { entities?: Record<string, { labels?: { en?: { value?: string } } }> };
-        cast = ids.map(id => people.entities?.[id]?.labels?.en?.value).filter(Boolean) as string[];
-      }
-    }
-    return Response.json({ description: page.extract, poster: page.thumbnail?.source, runtime, cast, genres });
-  } catch {
-    return Response.json({});
+    const query = new URLSearchParams({ query: title, ...(year ? { year } : {}) });
+    const search = await tmdb<{ results: TmdbMovie[] }>(`/search/movie?${query}`);
+    const movie = search.results[0];
+    if (!movie) return Response.json({});
+    const details = await tmdb<TmdbDetails>(`/movie/${movie.id}?append_to_response=credits,external_ids`);
+    return Response.json({
+      poster: details.poster_path ? `https://image.tmdb.org/t/p/w500${details.poster_path}` : undefined,
+      description: details.overview,
+      year: details.release_date?.slice(0, 4),
+      runtime: details.runtime,
+      genres: details.genres?.map(genre => genre.name) ?? [],
+      cast: details.credits?.cast?.slice(0, 4).map(person => person.name) ?? [],
+      tmdbRating: details.vote_average ? Number(details.vote_average.toFixed(1)) : undefined,
+      imdbId: details.external_ids?.imdb_id ?? undefined,
+    });
+  } catch (error) {
+    console.error("TMDB lookup failed", error);
+    return Response.json({ error: "Movie metadata could not be loaded" }, { status: 502 });
   }
 }
