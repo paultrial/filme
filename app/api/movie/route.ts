@@ -11,8 +11,8 @@ type TmdbDetails = {
 };
 
 const tmdb = async <T,>(path: string) => {
-  const token = process.env.TMDB_READ_ACCESS_TOKEN;
-  if (!token) throw new Error("TMDB_READ_ACCESS_TOKEN is not configured");
+  const token = process.env.TMDB_READ_ACCESS_TOKEN || process.env.TMDB_ACCESS_TOKEN;
+  if (!token) throw new Error("TMDB_TOKEN_MISSING");
   const response = await fetch(`https://api.themoviedb.org/3${path}`, {
     headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
     next: { revalidate: 604800 },
@@ -45,6 +45,10 @@ export async function GET(request: Request) {
     });
   } catch (error) {
     console.error("TMDB lookup failed", error);
-    return Response.json({ error: "Movie metadata could not be loaded" }, { status: 502 });
+    const missingToken = error instanceof Error && error.message === "TMDB_TOKEN_MISSING";
+    return Response.json(
+      { error: missingToken ? "TMDB token is not configured for this deployment" : "Movie metadata could not be loaded" },
+      { status: missingToken ? 503 : 502 },
+    );
   }
 }
