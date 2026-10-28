@@ -1,36 +1,27 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Filme for Kodi
 
-## Getting Started
+Filme is a static movie-picker web app for Kodi on OSMC. Choosing a title sends it to the local `server.py`, which asks Kodi to play the matching library item.
 
-First, run the development server:
+## Build and run on OSMC
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm ci
+npm run build
+python3 server.py
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`npm run build` creates a fully static `out/` directory. Copy the project (including `out/`, `server.py`, and `public/filme.txt`) to the Pi, then start the Python server. Open `http://<pi-address>:3000` from a device on the same network.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The build reads `public/filme.txt`; it must contain one Kodi filename per line. The original filename is sent to Kodi unchanged so it can be matched against the library.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Kodi's web server and JSON-RPC must be enabled. Configure the Python server as needed:
 
-## Learn More
+```bash
+KODI_USER=osmc KODI_PASS=your-password MOVIES_DIR=/media/usb/Movies python3 server.py
+```
 
-To learn more about Next.js, take a look at the following resources:
+`MOVIES_DIR` is only needed when a movie is absent from Kodi's library. See the comments at the top of `server.py` for all available options.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Development
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Run `npm run dev` while editing. Kodi playback requires `python3 server.py`, since the Next development server does not provide `/api/play`.
