@@ -22,6 +22,6 @@ async function getMovies() {
   return source.split(/\r?\n/).filter(Boolean).map(cleanFilename);
 }
 
-export default async function Home() {
-  return <MoviePicker movies={await getMovies()} />;
+export default function Home() {
+  return <MoviePicker initialMovies={[]} />;
 }
