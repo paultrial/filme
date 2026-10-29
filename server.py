@@ -22,6 +22,8 @@ import os
 import urllib.request
 import urllib.parse
 import re
+import threading
+import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 
@@ -30,12 +32,54 @@ STATIC_DIR = Path(os.environ.get("STATIC_DIR", Path(__file__).resolve().parent /
 KODI_URL = os.environ.get("KODI_URL", "http://localhost:8080/jsonrpc")
 KODI_USER = "osmc"
 KODI_PASS = "osmc"
-MOVIES_DIR = os.environ.get("MOVIES_DIR", "")
+MOVIES_DIR = os.environ.get("MOVIES_DIR", "/media/Seagate/Movies")
+FILME_LIST_FILE = Path(__file__).resolve().parent / "public" / "filme.txt"
 TMDB_TOKEN = os.environ.get("TMDB_READ_ACCESS_TOKEN", "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlODI0YmE2ODhlMWQwN2ZmYzdmNjE5NGE1MWZiZTc0MSIsIm5iZiI6MTY5MTU3NTY1Ni44MzEsInN1YiI6IjY0ZDM2NTY4YjZjMjY0MTE1Njk5YTUyYSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.3lx7QW1oSrMqlnAJL1LX8J9gJp54o4no2BJdE3zyMSI")
 METADATA_DIR = Path(__file__).resolve().parent / "public" / "metadata"
 
 
+def update_movies_list():
+    """Scan MOVIES_DIR, update filme.txt and trigger metadata fetch for each movie."""
+    if not MOVIES_DIR or not Path(MOVIES_DIR).exists():
+        print(f"Movies directory {MOVIES_DIR} not found. Skipping update.")
+        return
+
+    print(f"Scanning {MOVIES_DIR} for movies...")
+    movie_files = []
+    # Common video extensions
+    extensions = {'.mkv', '.mp4', '.avi', '.mov', '.wmv'}
+    
+    try:
+        for entry in os.scandir(MOVIES_DIR):
+            if entry.is_file() and Path(entry.name).suffix.lower() in extensions:
+                movie_files.append(entry.name)
+        
+        movie_files.sort()
+        
+        # Write to filme.txt
+        FILME_LIST_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(FILME_LIST_FILE, "w", encoding="utf-8") as f:
+            f.write("\n".join(movie_files))
+        
+        print(f"Updated {FILME_LIST_FILE} with {len(movie_files)} movies.")
+        
+        # Update metadata for each movie
+        for movie in movie_files:
+            # extract title for metadata search
+            # remove extension and common separators
+            title = Path(movie).stem
+            # try to extract year if present (e.g. "Movie (2023)")
+            year_match = re.search(r'\((\d{4})\)', title)
+            year = year_match.group(1) if year_match else None
+            
+            get_tmdb_metadata(title, year)
+            
+    except Exception as e:
+        print(f"Error updating movies list: {e}")
+
+
 def kodi(method, params=None):
+
     """Call a Kodi JSON-RPC method and return its result."""
     payload = json.dumps(
         {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
@@ -255,9 +299,14 @@ class Handler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self):
+        if self.path == "/api/scan":
+            update_movies_list()
+            return self.send_json(200, {"ok": True, "message": "Movies list updated"})
+
         if self.path != "/api/play":
             return self.send_json(404, {"error": "not found"})
         try:
+
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
             filename = str(body.get("filename", "")).strip()
@@ -274,6 +323,10 @@ class Handler(SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     if not STATIC_DIR.is_dir():
         raise SystemExit(f"Static folder not found: {STATIC_DIR}")
+    
+    # Run an initial scan immediately
+    update_movies_list()
+
     print(f"Metadata directory: {METADATA_DIR.absolute()}")
     print(f"Serving {STATIC_DIR} on http://0.0.0.0:{PORT}")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
