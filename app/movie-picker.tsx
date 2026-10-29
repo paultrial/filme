@@ -80,6 +80,9 @@ export default function MoviePicker({ movies }: { movies: LibraryMovie[] }) {
           </div>
           {meta?.overview && <p className="description">{meta.overview}</p>}
           <button className="play" disabled={playing === movie.id} onClick={() => playMovie(movie)}>{playing === movie.id ? "Starting…" : "Play on TV"}</button>
+            <a href={`https://www.imdb.com/find/?q=${encodeURIComponent(movie.title)}&ref_=hm_nv_srb_sm`} target="_blank" rel="noopener noreferrer" className="imdb-link">
+              <img src="/IMDb-Logo.png" alt="IMDb" />
+            </a>
         </div>
       </article>
     );
