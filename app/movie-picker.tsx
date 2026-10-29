@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import type { LibraryMovie } from "./page";
 
-type Movie = LibraryMovie & { genre: string; color: string };
+type Movie = LibraryMovie & { genre: string; color: string; poster?: string };
 const genres = ["All", "Drama", "Thriller", "Comedy", "Documentary", "Action", "Animation", "Horror", "Music"];
 const palette = ["#38444c", "#a04535", "#53624d", "#695877", "#ba7c42", "#36566a", "#7c3e50", "#696041"];
 const hash = (text: string) => [...text].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 7);
@@ -11,8 +11,77 @@ function decorate(movie: LibraryMovie): Movie { const code = hash(movie.title); 
 
 export default function MoviePicker({ movies }: { movies: LibraryMovie[] }) {
   const [query, setQuery] = useState(""); const [genre, setGenre] = useState("All"); const [saved, setSaved] = useState<number[]>([]); const [playing, setPlaying] = useState<number | null>(null); const [playMessage, setPlayMessage] = useState("");
+  const [metadata, setMetadata] = useState<Record<number, any>>({});
+
+  useEffect(() => {
+    const cached = localStorage.getItem("filme-metadata");
+    if (cached) setMetadata(JSON.parse(cached));
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchAllMetadata = async () => {
+      // Process in small chunks to avoid blocking the main thread entirely 
+      // but keep it sequential enough to prevent ERR_INSUFFICIENT_RESOURCES
+      for (const movie of movies) {
+        if (!isMounted) break;
+        if (metadata[movie.id]) continue;
+
+        try {
+          const res = await fetch(`/api/metadata?title=${encodeURIComponent(movie.title)}&year=${movie.year || ""}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && !data.error && !data.not_found) {
+              setMetadata(prev => ({ ...prev, [movie.id]: data }));
+            } else {
+              setMetadata(prev => ({ ...prev, [movie.id]: { not_found: true } }));
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    };
+
+    fetchAllMetadata();
+    return () => { isMounted = false; };
+  }, [movies]); // Removed 'metadata' from dependencies to prevent loop
+
   const results = useMemo(() => movies.map(decorate).filter((movie) => (!query || movie.title.toLowerCase().includes(query.toLowerCase())) && (genre === "All" || movie.genre === genre)).sort((a, b) => a.title.localeCompare(b.title)), [movies, query, genre]);
   const toggle = (id: number) => setSaved((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   const playMovie = async (movie: Movie) => { setPlaying(movie.id); setPlayMessage(""); try { const response = await fetch("/api/play", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filename: movie.filename }) }); const result = (await response.json().catch(() => ({}))) as { error?: string }; if (!response.ok) throw new Error(result.error || "Could not reach Kodi"); setPlayMessage(`Playing ${movie.title} on Kodi.`); } catch (error) { setPlayMessage(error instanceof Error ? error.message : "Could not reach Kodi"); } finally { setPlaying(null); } };
-  return <main className="app-shell"><header className="topbar"><div className="brand">fi<i>l</i>me.</div><div className="library-count">{movies.length} titles</div></header><section className="hero"><div><div className="eyebrow">A better way to press play</div><h1>Tonight deserves a good movie.</h1></div><p className="hero-copy">Pick a film here and it will start on your Kodi TV.</p></section><section className="controls"><div className="control search"><label htmlFor="search">Search shelf</label><input id="search" placeholder="Try “Blade Runner”" value={query} onChange={(event) => setQuery(event.target.value)} /></div></section><nav className="genre-row" aria-label="Filter by genre"><span className="filter-label">Genre</span>{genres.map((item) => <button key={item} className={`pill ${genre === item ? "active" : ""}`} onClick={() => setGenre(item)}>{item}</button>)}</nav><div className="results-heading"><h2>{genre === "All" ? "All films" : genre}</h2><span>{results.length} found</span></div><p className={`play-status ${playMessage ? "visible" : ""}`} role="status">{playMessage}</p>{results.length ? <section className="grid">{results.map((movie) => <article className="movie" key={movie.id}><button aria-label={`Save ${movie.title}`} className={`pick ${saved.includes(movie.id) ? "saved" : ""}`} onClick={() => toggle(movie.id)}>{saved.includes(movie.id) ? "✓" : "+"}</button><div className="poster" style={{ background: movie.color }}><small>ON YOUR SHELF</small><span>{movie.title.split(" ").slice(0, 3).join(" ")}</span><small>{movie.year ?? "—"}</small></div><div className="movie-copy"><div className="title-line"><h3>{movie.title}</h3><span className="year">{movie.year ?? "—"}</span></div><span className="genre">{movie.genre}</span><div className="metrics"><span className="metric">Ready on <b>Kodi</b></span></div><button className="play" disabled={playing === movie.id} onClick={() => playMovie(movie)}>{playing === movie.id ? "Starting…" : "Play on TV"}</button></div></article>)}</section> : <div className="empty">Nothing matches that combination. Try widening the filters.</div>}</main>;
+  return <main className="app-shell"><header className="topbar"><div className="brand">fi<i>l</i>me.</div><div className="library-count">{movies.length} titles</div></header><section className="hero"><div><div className="eyebrow">A better way to press play</div><h1>Tonight deserves a good movie.</h1></div><p className="hero-copy">Pick a film here and it will start on your Kodi TV.</p></section><section className="controls"><div className="control search"><label htmlFor="search">Search shelf</label><input id="search" placeholder="Try “Blade Runner”" value={query} onChange={(event) => setQuery(event.target.value)} /></div></section><nav className="genre-row" aria-label="Filter by genre"><span className="filter-label">Genre</span>{genres.map((item) => <button key={item} className={`pill ${genre === item ? "active" : ""}`} onClick={() => setGenre(item)}>{item}</button>)}</nav><div className="results-heading"><h2>{genre === "All" ? "All films" : genre}</h2><span>{results.length} found</span></div><p className={`play-status ${playMessage ? "visible" : ""}`} role="status">{playMessage}</p>{results.length ? <section className="grid">{results.map((movie) => {
+    const meta = metadata[movie.id];
+    return (
+      <article className="movie" key={movie.id}>
+        <button aria-label={`Save ${movie.title}`} className={`pick ${saved.includes(movie.id) ? "saved" : ""}`} onClick={() => toggle(movie.id)}>{saved.includes(movie.id) ? "✓" : "+"}</button>
+        <div className="poster" style={{ 
+          backgroundImage: meta?.poster_path ? `url(${meta.poster_path.startsWith('/public') ? meta.poster_path : `https://image.tmdb.org/t/p/w500${meta.poster_path}`})` : undefined,
+          backgroundColor: movie.color,
+          backgroundPosition: "center",
+          backgroundSize: "cover"
+        }}>
+          {!meta?.poster_path && (
+            <>
+              <small>ON YOUR SHELF</small>
+              <span>{movie.title.split(" ").slice(0, 3).join(" ")}</span>
+              <small>{movie.year ?? "—"}</small>
+            </>
+          )}
+        </div>
+        <div className="movie-copy">
+          <div className="title-line">
+            <h3>{meta?.title || movie.title}</h3>
+            <span className="year">{movie.year ?? "—"}</span>
+          </div>
+          <span className="genre">{meta?.genre || movie.genre}</span>
+          <div className="cast-list">
+            {meta?.cast?.map((actor: string) => <span key={actor}>{actor}</span>)}
+          </div>
+          {meta?.overview && <p className="description">{meta.overview}</p>}
+          <button className="play" disabled={playing === movie.id} onClick={() => playMovie(movie)}>{playing === movie.id ? "Starting…" : "Play on TV"}</button>
+        </div>
+      </article>
+    );
+  })}</section> : <div className="empty">Nothing matches that combination. Try widening the filters.</div>}</main>;
 }
