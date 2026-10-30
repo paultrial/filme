@@ -65,19 +65,20 @@ export default function MoviePicker({ initialMovies }: { initialMovies: LibraryM
     const fetchAllMetadata = async () => {
       for (const movie of movies) {
         if (!isMounted) break;
-        // We use a functional update for setMetadata to avoid depending on the 'metadata' state variable itself,
-        // but we still need to know if the movie already has metadata.
-        // To avoid the exhaustive-deps warning while keeping the logic correct, 
-        // we can check the metadata inside the loop by accessing the latest state 
-        // if we move the check into the update or use a ref, but a simpler way 
-        // in this specific case is to accept that we might re-fetch if movies change, 
-        // or use a ref to track processed IDs.
-        
-        // However, the current implementation checks `metadata[movie.id]` at the start of the loop.
-        // Since `metadata` is a dependency, adding it to the array would cause this effect to re-run 
-        // every time a single movie's metadata is fetched, leading to an infinite loop or redundant requests.
-        
-        // The correct pattern here is to use a ref for the metadata or handle the check differently.
+
+        try {
+          const res = await fetch(`/api/metadata?title=${encodeURIComponent(movie.title)}&year=${movie.year || ""}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && !data.error && !data.not_found) {
+              setMetadata(prev => ({ ...prev, [movie.id]: data }));
+            } else {
+              setMetadata(prev => ({ ...prev, [movie.id]: { not_found: true } }));
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
       }
     };
     fetchAllMetadata();
