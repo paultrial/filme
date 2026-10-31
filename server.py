@@ -24,6 +24,7 @@ import urllib.parse
 import re
 import threading
 import time
+import xml.etree.ElementTree as ET
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 
@@ -37,6 +38,13 @@ FILME_LIST_FILE = Path(__file__).resolve().parent / "public" / "filme.txt"
 TMDB_TOKEN = os.environ.get("TMDB_READ_ACCESS_TOKEN", "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlODI0YmE2ODhlMWQwN2ZmYzdmNjE5NGE1MWZiZTc0MSIsIm5iZiI6MTY5MTU3NTY1Ni44MzEsInN1YiI6IjY0ZDM2NTY4YjZjMjY0MTE1Njk5YTUyYSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.3lx7QW1oSrMqlnAJL1LX8J9gJp54o4no2BJdE3zyMSI")
 METADATA_DIR = Path(__file__).resolve().parent / "public" / "metadata"
 
+# RSS Polling
+RSS_URL = os.environ.get("RSS_URL", "https://filelist.io/rss.php?cat=6,26,20,2,3,4,19,1&passkey=7e823ade4f2aeecf036d643499bf954b")
+RSS_KEYWORDS = os.environ.get("RSS_KEYWORDS", "knightfall,pickpocket,knightquest,Batman.Knightfall.Part.2,digger").split(",")
+RSS_INTERVAL = int(os.environ.get("RSS_INTERVAL", "3600"))
+RSS_RESULTS_FILE = Path(__file__).resolve().parent / "public" / "rss_results.json"
+rss_polling_active = True
+
 
 def update_movies_list():
     """Scan MOVIES_DIR, update filme.txt and trigger metadata fetch for each movie."""
@@ -48,21 +56,21 @@ def update_movies_list():
     movie_files = []
     # Common video extensions
     extensions = {'.mkv', '.mp4', '.avi', '.mov', '.wmv'}
-    
+
     try:
         for entry in os.scandir(MOVIES_DIR):
             if entry.is_file() and Path(entry.name).suffix.lower() in extensions:
                 movie_files.append(entry.name)
-        
+
         movie_files.sort()
-        
+
         # Write to filme.txt
         FILME_LIST_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(FILME_LIST_FILE, "w", encoding="utf-8") as f:
             f.write("\n".join(movie_files))
-        
+
         print(f"Updated {FILME_LIST_FILE} with {len(movie_files)} movies.")
-        
+
         # Update metadata for each movie
         for movie in movie_files:
             # extract title for metadata search
@@ -71,12 +79,45 @@ def update_movies_list():
             # try to extract year if present (e.g. "Movie (2023)")
             year_match = re.search(r'\((\d{4})\)', title)
             year = year_match.group(1) if year_match else None
-            
+
             get_tmdb_metadata(title, year)
-            
+
     except Exception as e:
         print(f"Error updating movies list: {e}")
 
+
+def poll_rss():
+    global rss_polling_active
+    while rss_polling_active:
+        try:
+            print(f"Polling RSS: {RSS_URL}")
+            with urllib.request.urlopen(RSS_URL, timeout=15) as resp:
+                content = resp.read()
+                root = ET.fromstring(content)
+                items = root.findall(".//item")
+
+                found = []
+                for item in items:
+                    title = item.findtext("title") or ""
+                    desc = item.findtext("description") or ""
+                    text = (title + " " + desc).lower()
+
+                    for kw in RSS_KEYWORDS:
+                        kw = kw.strip().lower()
+                        if kw and kw in text:
+                            found.append({"title": title, "keyword": kw, "link": item.findtext("link")})
+
+                if found:
+                    print(f"Found {len(found)} matches. Saving and stopping.")
+                    RSS_RESULTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    with open(RSS_RESULTS_FILE, "w", encoding="utf-8") as f:
+                        json.dump(found, f)
+                    rss_polling_active = False
+        except Exception as e:
+            print(f"RSS Poll Error: {e}")
+
+        if rss_polling_active:
+            time.sleep(RSS_INTERVAL)
 
 def kodi(method, params=None):
 
@@ -286,6 +327,14 @@ class Handler(SimpleHTTPRequestHandler):
                     self.wfile.write(f.read())
                 return
 
+        if self.path == "/api/rss-results":
+            if RSS_RESULTS_FILE.exists():
+                with open(RSS_RESULTS_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return self.send_json(200, data)
+            else:
+                return self.send_json(200, [])
+
         if self.path.startswith("/api/metadata"):
             # /api/metadata?title=...&year=...
             params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -326,6 +375,10 @@ if __name__ == "__main__":
     
     # Run an initial scan immediately
     update_movies_list()
+
+    # Start RSS polling in a background thread
+    rss_thread = threading.Thread(target=poll_rss, daemon=True)
+    rss_thread.start()
 
     print(f"Metadata directory: {METADATA_DIR.absolute()}")
     print(f"Serving {STATIC_DIR} on http://0.0.0.0:{PORT}")

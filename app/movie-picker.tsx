@@ -19,6 +19,12 @@ const palette = ["#38444c", "#a04535", "#53624d", "#695877", "#ba7c42", "#36566a
 const hash = (text: string) => [...text].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 7);
 function decorate(movie: LibraryMovie): Movie { const code = hash(movie.title); return { ...movie, genre: genres.slice(1)[code % (genres.length - 1)], color: palette[code % palette.length] }; }
 
+type RSSResult = {
+  title: string;
+  keyword: string;
+  link: string;
+};
+
 export default function MoviePicker({ initialMovies }: { initialMovies: LibraryMovie[] }) {
   const [movies, setMovies] = useState<LibraryMovie[]>(initialMovies);
   const [query, setQuery] = useState("");
@@ -27,6 +33,7 @@ export default function MoviePicker({ initialMovies }: { initialMovies: LibraryM
   const [playing, setPlaying] = useState<number | null>(null);
   const [playMessage, setPlayMessage] = useState("");
   const [scanning, setScanning] = useState(false);
+  const [rssResults, setRssResults] = useState<RSSResult[]>([]);
   const [metadata, setMetadata] = useState<Record<number, MovieMetadata>>(() => {
     if (typeof window !== "undefined") {
       const cached = localStorage.getItem("filme-metadata");
@@ -57,7 +64,20 @@ export default function MoviePicker({ initialMovies }: { initialMovies: LibraryM
       }
     };
 
+    const fetchRss = async () => {
+      try {
+        const res = await fetch("/api/rss-results");
+        if (res.ok) {
+          const data = await res.json();
+          setRssResults(data);
+        }
+      } catch (e) {
+        console.error("Error fetching RSS results:", e);
+      }
+    };
+
     fetchMovies();
+    fetchRss();
   }, []);
 
   useEffect(() => {
@@ -110,6 +130,12 @@ export default function MoviePicker({ initialMovies }: { initialMovies: LibraryM
         <div className="library-count">{movies.length} titles</div>
         <button className="scan-btn" onClick={scanMovies} disabled={scanning}>{scanning ? "Scanning..." : "Refresh Library"}</button>
       </header>
+      {rssResults.length > 0 && (
+        <div className="rss-alert" style={{ backgroundColor: "#fde047", color: "#000", padding: "10px", textAlign: "center", fontSize: "0.9rem", fontWeight: "bold", borderBottom: "1px solid #ccc" }}>
+          🚨 Found in RSS: {rssResults.map(r => `${r.title} (${r.keyword})`).join(", ")}
+          <a href={`/public/rss_results.json`} target="_blank" style={{ marginLeft: "10px", textDecoration: "underline" }}>View JSON</a>
+        </div>
+      )}
       <section className="hero">
         <div>
           <div className="eyebrow">A better way to press play</div>
